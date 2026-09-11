@@ -1,0 +1,59 @@
+// Declarative pipeline example using the sre-shared-lib steps.
+// Register the library in Jenkins as 'sre-shared-lib' before running.
+@Library('sre-shared-lib') _
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY = 'myregistry.example.com'
+        IMAGE    = 'platform/demo-app'
+    }
+
+    stages {
+        stage('Build & Push') {
+            steps {
+                buildApp(registry: env.REGISTRY,
+                         image:    env.IMAGE,
+                         tag:      "${env.BUILD_NUMBER}")
+            }
+        }
+        stage('Test') {
+            steps {
+                runTests(testCommand:  'pytest -q --junitxml=junit.xml',
+                         junitPattern: 'junit.xml')
+            }
+        }
+        stage('Security Scan') {
+            steps {
+                securityScan(image: "${env.REGISTRY}/${env.IMAGE}:${env.BUILD_NUMBER}")
+            }
+        }
+        stage('Deploy to Staging') {
+            when { branch 'main' }
+            steps {
+                deployK8s(env:       'staging',
+                          release:   'demo-app',
+                          chart:     './helm/demo-app',
+                          namespace: 'apps-staging',
+                          values:    ['image.tag': "${env.BUILD_NUMBER}"])
+            }
+        }
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            steps {
+                deployK8s(env:       'prod',
+                          release:   'demo-app',
+                          chart:     './helm/demo-app',
+                          namespace: 'apps-prod',
+                          values:    ['image.tag': "${env.BUILD_NUMBER}"])
+            }
+        }
+    }
+
+    post {
+        always {
+            notifySlack('#deploys')
+        }
+    }
+}
